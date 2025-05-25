@@ -1,0 +1,545 @@
+<script type="text/javascript">
+  var gk_isXlsx = false;
+  var gk_xlsxFileLookup = {};
+  var gk_fileData = {};
+  function filledCell(cell) {
+    return cell !== "" && cell != null;
+  }
+  function loadFileData(filename) {
+    if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+      try {
+        var workbook = XLSX.read(gk_fileData[filename], { type: "base64" });
+        var firstSheetName = workbook.SheetNames[0];
+        var worksheet = workbook.Sheets[firstSheetName];
+
+        // Convert sheet to JSON to filter blank rows
+        var jsonData = XLSX.utils.sheet_to_json(worksheet, {
+          header: 1,
+          blankrows: false,
+          defval: "",
+        });
+        // Filter out blank rows (rows where all cells are empty, null, or undefined)
+        var filteredData = jsonData.filter((row) => row.some(filledCell));
+
+        // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+        var headerRowIndex = filteredData.findIndex(
+          (row, index) =>
+            row.filter(filledCell).length >=
+            filteredData[index + 1]?.filter(filledCell).length
+        );
+        // Fallback
+        if (headerRowIndex === -1 || headerRowIndex > 25) {
+          headerRowIndex = 0;
+        }
+
+        // Convert filtered JSON back to CSV
+        var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+        csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+        return csv;
+      } catch (e) {
+        console.error(e);
+        return "";
+      }
+    }
+    return gk_fileData[filename] || "";
+  }
+</script>
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Croissant Creek Pearl Plotter</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.2/p5.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-gray-100 flex flex-col items-center p-4">
+    <h1 class="text-2xl font-bold mb-2">
+      Croissant Creek Pearl Plotter by Hubert
+    </h1>
+    <div class="mb-4">
+      <span id="invalidClock" class="text-sm"
+        >Time until Invalid: --:--:--</span
+      >
+    </div>
+
+    <!-- Clock -->
+    <div class="mb-4">
+      <span id="resetClock" class="text-sm">Time until Reset: --:--</span>
+    </div>
+    <!-- Clock end -->
+
+    <!-- Color Buttons -->
+    <div class="mb-4 flex flex-wrap gap-2">
+      <button
+        id="blackBtn"
+        class="w-20 h-8 bg-black text-white border-2 border-gray-300 flex items-center justify-center"
+      >
+        Black
+      </button>
+
+      <button
+        id="blueBtn"
+        class="w-20 h-8 bg-blue-500 text-white border-2 border-gray-300 flex items-center justify-center"
+      >
+        Blue
+      </button>
+      <button
+        id="cyanBtn"
+        class="w-20 h-8 bg-cyan-500 text-black border-2 border-gray-300 flex items-center justify-center"
+      >
+        Cyan
+      </button>
+      <button
+        id="greenBtn"
+        class="w-20 h-8 bg-green-400 text-white border-2 border-gray-300 flex items-center justify-center"
+      >
+        Green
+      </button>
+      <button
+        id="magentaBtn"
+        class="w-20 h-8 bg-fuchsia-500 text-white border-2 border-gray-300 flex items-center justify-center"
+      >
+        Magenta
+      </button>
+      <button
+        id="redBtn"
+        class="w-20 h-8 bg-red-500 text-white border-2 border-gray-300 flex items-center justify-center"
+      >
+        Red
+      </button>
+      <button
+        id="whiteBtn"
+        class="w-20 h-8 bg-white text-black border-2 border-gray-300 flex items-center justify-center"
+      >
+        White
+      </button>
+      <button
+        id="yellowBtn"
+        class="w-20 h-8 bg-yellow-500 text-black border-2 border-gray-300 flex items-center justify-center"
+      >
+        Yellow
+      </button>
+    </div>
+
+    <!-- Coordinate axes input -->
+    <div class="mb-4">
+      <label for="xCoord" class="mr-2">X:</label>
+      <input
+        type="number"
+        id="xCoord"
+        min="-160"
+        max="160"
+        step="1"
+        class="w-20 px-2 py-1 border rounded"
+      />
+      <label for="yCoord" class="ml-4 mr-2">Y:</label>
+      <input
+        type="number"
+        id="yCoord"
+        min="-160"
+        max="160"
+        step="1"
+        class="w-20 px-2 py-1 border rounded"
+      />
+      <button
+        id="plotButton"
+        class="bg-green-500 text-white px-4 py-2 rounded ml-2"
+      >
+        Plot Point
+      </button>
+    </div>
+    <div class="mb-4">
+      <button
+        id="exportPointsButton"
+        class="bg-teal-500 text-white px-4 py-2 rounded"
+      >
+        Export Points
+      </button>
+      <label for="loadPointsInput" class="ml-4 mr-2">Load Points:</label>
+      <input type="file" id="loadPointsInput" accept=".json" class="mb-2" />
+    </div>
+    <!-- Coordinate axes input end -->
+
+    <!-- Hover coordinates -->
+    <div class="mb-3 mt-2">
+      <span id="hoverCoords" class="text-sm"
+        >Hover over a pearl to see coordinates</span
+      >
+    </div>
+    <!-- Hover coordinates end -->
+
+    <div class="flex justify-between w-[400px]">
+      <div class="flex flex-col">
+        <label for="imageInput" class="text-center text-lg mb-[4px]"
+          >Upload Map:</label
+        >
+        <input type="file" id="imageInput" accept="image/*" class="text-xs" />
+      </div>
+      <div class="flex justify-end mb-2 w-[400px]">
+        <button
+          id="toggleAxes"
+          class="bg-blue-500 text-white rounded p-1 px-2 text-sm"
+        >
+          Toggle Axes
+        </button>
+        <button
+          id="undoButton"
+          class="bg-red-500 text-white rounded ml-2 p-1 px-2 text-sm"
+        >
+          Undo
+        </button>
+        <button
+          id="deleteButton"
+          class="bg-purple-600 text-white rounded ml-2 px-2 text-sm"
+        >
+          Delete
+        </button>
+      </div>
+    </div>
+
+    <!-- Canvas -->
+    <div id="canvasContainer" class="relative w-[480px] h-[480px]"></div>
+    <!-- Canvas end -->
+
+    <!-- Coloring script -->
+    <script>
+      let points = [];
+      let currentColor = "black";
+      let showAxes = true;
+      let img = null;
+      let deleteMode = false;
+      let hoverCoords = "";
+
+      function setup() {
+        let canvas = createCanvas(400, 400);
+        canvas.parent("canvasContainer");
+        canvas.position(40, 0);
+        document
+          .getElementById("blackBtn")
+          .classList.add("border-4", "border-yellow-400");
+        updateClocks();
+        setInterval(updateClocks, 1000);
+      }
+
+      //   Clock function
+      function updateClocks() {
+        // Time until Invalid (next 12:00 AM UTC)
+        const now = new Date();
+        const utcHours = now.getUTCHours();
+        const utcMinutes = now.getUTCMinutes();
+        const utcSeconds = now.getUTCSeconds();
+
+        let secondsToMidnight =
+          24 * 3600 - (utcHours * 3600 + utcMinutes * 60 + utcSeconds);
+        let invalidHours = Math.floor(secondsToMidnight / 3600);
+        let remainingSeconds = secondsToMidnight % 3600;
+        let invalidMins = Math.floor(remainingSeconds / 60);
+        let invalidSecs = remainingSeconds % 60;
+        document.getElementById(
+          "invalidClock"
+        ).textContent = `Time until Invalid: ${invalidHours
+          .toString()
+          .padStart(2, "0")}:${invalidMins
+          .toString()
+          .padStart(2, "0")}:${invalidSecs.toString().padStart(2, "0")}`;
+
+        // Time until Reset (next hour or half-hour)
+        const localMinutes = now.getMinutes();
+        const localSeconds = now.getSeconds();
+        let targetMinutes = localMinutes < 30 ? 30 : 0;
+        let targetHours =
+          localMinutes < 30 ? now.getHours() : now.getHours() + 1;
+        let secondsToNext =
+          targetHours * 3600 +
+          targetMinutes * 60 -
+          (now.getHours() * 3600 + localMinutes * 60 + localSeconds);
+        const resetMins = Math.floor(secondsToNext / 60);
+        const resetSecs = secondsToNext % 60;
+        document.getElementById(
+          "resetClock"
+        ).textContent = `Time until Reset: ${resetMins
+          .toString()
+          .padStart(2, "0")}:${resetSecs.toString().padStart(2, "0")}`;
+      }
+      //   Clock function end
+
+      function draw() {
+        background(220);
+
+        if (img) {
+          image(img, 0, 0, width, height);
+        }
+
+        if (showAxes) {
+          stroke(150);
+          strokeWeight(0.5);
+          for (let x = -160; x <= 160; x += 20) {
+            let px = map(x, -160, 160, 0, width);
+            line(px, 0, px, height);
+          }
+          for (let y = -160; y <= 160; y += 20) {
+            let py = map(y, -160, 160, height, 0);
+            line(0, py, width, py);
+          }
+
+          stroke(0);
+          strokeWeight(1);
+          line(0, height / 2, width, height / 2);
+          line(width / 2, 0, width / 2, height);
+
+          textAlign(CENTER, CENTER);
+          textSize(10);
+          fill(0);
+          noStroke();
+          for (let x = -160; x <= 160; x += 20) {
+            let px = map(x, -160, 160, 0, width);
+            if (x % 40 === 0) {
+              stroke(0);
+              strokeWeight(1);
+              line(px, height / 2 - 7, px, height / 2 + 7);
+            } else {
+              stroke(150);
+              strokeWeight(0.5);
+              line(px, height / 2 - 4, px, height / 2 + 4);
+            }
+            noStroke();
+            text(Math.round(x), px, height + 30);
+          }
+          for (let y = -160; y <= 160; y += 20) {
+            let py = map(y, -160, 160, height, 0);
+            if (y % 40 === 0) {
+              stroke(0);
+              strokeWeight(1);
+              line(width / 2 - 7, py, width / 2 + 7, py);
+            } else {
+              stroke(150);
+              strokeWeight(0.5);
+              line(width / 2 - 4, py, width / 2 + 4, py);
+            }
+            noStroke();
+            text(Math.round(y), width + 35, py);
+          }
+
+          text("+X", width - 10, height / 2 + 20);
+          text("-X", 10, height / 2 + 20);
+          text("+Y", width / 2, 10);
+          text("-Y", width / 2, height - 10);
+        }
+
+        hoverCoords = "";
+        let closestDist = Infinity;
+        let closestPoint = null;
+        for (let point of points) {
+          let px = map(point.x, -160, 160, 0, width);
+          let py = map(point.y, -160, 160, height, 0);
+          let d = dist(mouseX, mouseY, px, py);
+          if (d < 10 && d < closestDist) {
+            closestDist = d;
+            closestPoint = point;
+          }
+        }
+        if (closestPoint) {
+          hoverCoords = `(${Math.round(closestPoint.x)}, ${Math.round(
+            closestPoint.y
+          )})`;
+        }
+        document.getElementById("hoverCoords").textContent =
+          hoverCoords || "Hover over a pearl to see coordinates";
+
+        for (let point of points) {
+          if (point.color === "green") {
+            fill(0, 255, 0);
+          } else {
+            fill(point.color);
+          }
+          noStroke();
+          let px = map(point.x, -160, 160, 0, width);
+          let py = map(point.y, -160, 160, height, 0);
+          ellipse(px, py, 8, 8);
+        }
+      }
+
+      function mousePressed() {
+        if (mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height) {
+          if (deleteMode) {
+            let closestIdx = -1;
+            let closestDist = Infinity;
+            for (let i = 0; i < points.length; i++) {
+              let px = map(points[i].x, -160, 160, 0, width);
+              let py = map(points[i].y, -160, 160, height, 0);
+              let d = dist(mouseX, mouseY, px, py);
+              if (d < 10 && d < closestDist) {
+                closestDist = d;
+                closestIdx = i;
+              }
+            }
+            if (closestIdx !== -1) {
+              points.splice(closestIdx, 1);
+            }
+          } else {
+            let x = Math.round(map(mouseX, 0, width, -160, 160));
+            let y = Math.round(map(mouseY, 0, height, 160, -160));
+            points.push({ x: x, y: y, color: currentColor });
+          }
+        }
+      }
+
+      function keyPressed() {
+        switch (key.toLowerCase()) {
+          case "b":
+            updateColor("black");
+            break;
+          case "l":
+            updateColor("blue");
+            break;
+          case "c":
+            updateColor("cyan");
+            break;
+          case "g":
+            updateColor("green");
+            break;
+          case "m":
+            updateColor("magenta");
+            break;
+          case "r":
+            updateColor("red");
+            break;
+          case "w":
+            updateColor("white");
+            break;
+          case "y":
+            updateColor("yellow");
+            break;
+        }
+      }
+
+      function updateColor(color) {
+        currentColor = color;
+        document
+          .querySelectorAll(".flex.items-center.justify-center")
+          .forEach((btn) => {
+            btn.classList.remove("border-4", "border-yellow-400");
+            btn.classList.add("border-2", "border-gray-300");
+          });
+        document
+          .getElementById(color + "Btn")
+          .classList.remove("border-2", "border-gray-300");
+        document
+          .getElementById(color + "Btn")
+          .classList.add("border-4", "border-yellow-400");
+      }
+
+      document
+        .getElementById("imageInput")
+        .addEventListener("change", function (e) {
+          let file = e.target.files[0];
+          if (file) {
+            let url = URL.createObjectURL(file);
+            loadImage(url, (loadedImg) => {
+              img = loadedImg;
+            });
+          }
+        });
+
+      document
+        .getElementById("toggleAxes")
+        .addEventListener("click", function () {
+          showAxes = !showAxes;
+        });
+
+      document
+        .getElementById("undoButton")
+        .addEventListener("click", function () {
+          points.pop();
+        });
+
+      document
+        .getElementById("deleteButton")
+        .addEventListener("click", function () {
+          deleteMode = !deleteMode;
+          this.classList.toggle("bg-purple-400");
+          this.classList.toggle("bg-purple-600");
+          this.classList.toggle("border-4", "border-yellow-400");
+          this.classList.toggle("border-2", "border-gray-300");
+        });
+
+      document
+        .getElementById("blackBtn")
+        .addEventListener("click", () => updateColor("black"));
+      document
+        .getElementById("blueBtn")
+        .addEventListener("click", () => updateColor("blue"));
+      document
+        .getElementById("cyanBtn")
+        .addEventListener("click", () => updateColor("cyan"));
+      document
+        .getElementById("greenBtn")
+        .addEventListener("click", () => updateColor("green"));
+      document
+        .getElementById("magentaBtn")
+        .addEventListener("click", () => updateColor("magenta"));
+      document
+        .getElementById("redBtn")
+        .addEventListener("click", () => updateColor("red"));
+      document
+        .getElementById("whiteBtn")
+        .addEventListener("click", () => updateColor("white"));
+      document
+        .getElementById("yellowBtn")
+        .addEventListener("click", () => updateColor("yellow"));
+
+      document
+        .getElementById("plotButton")
+        .addEventListener("click", function () {
+          let x = parseInt(document.getElementById("xCoord").value);
+          let y = parseInt(document.getElementById("yCoord").value);
+          if (
+            !isNaN(x) &&
+            !isNaN(y) &&
+            x >= -160 &&
+            x <= 160 &&
+            y >= -160 &&
+            y <= 160
+          ) {
+            points.push({ x: x, y: y, color: currentColor });
+          }
+        });
+
+      document
+        .getElementById("exportPointsButton")
+        .addEventListener("click", function () {
+          const now = new Date();
+          const timestamp =
+            now.getFullYear().toString() +
+            (now.getMonth() + 1).toString().padStart(2, "0") +
+            now.getDate().toString().padStart(2, "0") +
+            "_" +
+            now.getHours().toString().padStart(2, "0") +
+            now.getMinutes().toString().padStart(2, "0");
+          const data = JSON.stringify(points);
+          const blob = new Blob([data], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `croissant_creek_points_${timestamp}.json`;
+          a.click();
+          URL.revokeObjectURL(url);
+        });
+
+      document
+        .getElementById("loadPointsInput")
+        .addEventListener("change", function (e) {
+          let file = e.target.files[0];
+          if (file) {
+            const reader = new FileReader();
+            reader.onload = function (e) {
+              const data = JSON.parse(e.target.result);
+              points = data || [];
+            };
+            reader.readAsText(file);
+          }
+        });
+    </script>
+  </body>
+</html>
